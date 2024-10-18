@@ -10,21 +10,96 @@ def add_tables(db_cursor: sqlite3.Cursor):
     Creates the telemetry and commands tables needed for the database.
     :param db_cursor: The cursor database handle.
     :return:
-    """
+        """
     db_cursor.execute('create table if not exists union_selections('
                       'id INTEGER primary key,'
-                      'union INTEGER NOT NULL,'
+                      'union_parent INTEGER NOT NULL,'
                       'union_field INTEGER NOT NULL,'
                       'telemetry_item INTEGER ,'
                       'command_item INTEGER,'
-                      'FOREIGN KEY (union) REFERENCES fields(id),'
-                      'FOREIGN KEY (union_field) REFERENCES symbols(field),'
-                      'UNIQUE (union, union_field));')
+                      'FOREIGN KEY (union_parent) REFERENCES fields(id),'
+                      'FOREIGN KEY (union_field) REFERENCES fields(id),'
+                      'FOREIGN KEY (telemetry_item) REFERENCES telemetry(id),'
+                      'FOREIGN KEY (command_item) REFERENCES commands(id),'
+                      'UNIQUE (union_parent, union_field));')
+
 
 def read_yaml(yaml_file: str) -> dict:
     yaml_data = yaml.load(open(yaml_file, 'r'),
                           Loader=yaml.FullLoader)
     return yaml_data
+
+
+def get_fields_from_symbol(symbol_id, db_cursor: sqlite3.Cursor):
+    fields = db_cursor.execute("SELECT id, symbol, name, byte_offset, type from fields where symbol=?",
+                               (symbol_id,)).fetchall()
+    return fields
+
+
+def __follow_symbol_to_target(db_cursor, symbol_id: int):
+    """
+    Follows the symbol and returns the concrete one.
+    This is usually relevant when the symbol has been typedef'd in code
+    and the typedef name is used instead of the concrete one.
+
+    Returns the symbol id of the concrete symbol
+    """
+    symbol_record = db_cursor.execute(
+        'select id,elf,name,byte_size,artifact,long_description,short_description, target_symbol from symbols where id=?',
+        (symbol_id,)).fetchall()
+    target_symbol_id = symbol_record[0][7]
+    if target_symbol_id is None:
+        return symbol_record[0][0]
+    else:
+        return __follow_symbol_to_target(db_cursor, target_symbol_id)
+
+
+# def set_union_selection(symbol_name: str, union_mapping: dict, db_cursor: sqlite3.Cursor):
+def get_union_mapping(symbol_name: str, union_mapping: dict, db_cursor: sqlite3.Cursor):
+    """
+    Resolves union mapping field record keys and returns a tuple with the format of (union_parent_fields_key, union_field_fields_key)
+    :param symbol_name:
+    :param union_mapping:
+    :param db_cursor:
+    :return:
+    """
+    union_parent = list(union_mapping.keys())[0]
+    union_field = union_mapping[union_parent]
+
+    symbol_id = db_cursor.execute("SELECT id FROM symbols where name =?", (symbol_name,)).fetchone()[0]
+
+    symbol_fields = get_fields_from_symbol(__follow_symbol_to_target(db_cursor, symbol_id), db_cursor)
+
+    union_mapping_record = []
+
+    union_parent_key = None
+    union_field_key = None
+
+    for token in union_parent.split(".")[1:]:
+        field_type = None
+        for field in symbol_fields:
+            if token == field[2]:
+                union_parent_key = field[0]
+                field_type = field[4]
+
+        symbol_fields = get_fields_from_symbol(__follow_symbol_to_target(db_cursor, field_type), db_cursor)
+        print("symbol_fields")
+
+    union_fields = symbol_fields
+
+    for field in union_fields:
+        field_name = field[2]
+        field_id = field[0]
+        if field_name == union_field:
+            union_field_key = field_id
+
+    print(f"union_parent_key:{union_parent_key}")
+    print(f"union_parent_key:{union_field_key}")
+
+    # db_cursor.execute("SELECT id,")
+
+    logging.info(f"Selecting field {union_field} from {union_parent} union")
+    return (union_parent_key, union_field_key)
 
 
 # FIXME:It looks like we don't use this function. We should remove it.
@@ -63,9 +138,6 @@ def get_symbol_id(symbol_name: str, db_cursor: sqlite3.Cursor) -> tuple:
     return symbol_id.fetchone()
 
 
-
-
-
 def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor: sqlite3.Cursor):
     """
     Scans telemetry_data and writes it to the database. Please note that the database changes are not committed. Thus,
@@ -92,25 +164,6 @@ def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor:
                         name = message
                         min_rate = None
 
-                        # Check for empty values
-                        # FIXME: This logic is starting to look convoluted. The schema might help with this.
-                        if 'msgID' in message_dict:
-                            if message_dict['msgID'] is None:
-                                message_id = 0
-                                logging.warning(
-                                    f"modules.{module_name}.telemetry.{name}.msgID must not be empty. Setting it to 0.")
-                                # continue
-                            else:
-                                message_id = message_dict['msgID']
-                        else:
-                            logging.error(f"modules.{module_name}.telemetry.{name}.msgID key must exist.  Skipping.")
-
-                        if 'min_rate' in message_dict:
-                            if message_dict['min_rate'] is None:
-                                continue
-                            else:
-                                min_rate = message_dict['min_rate']
-
                         if 'struct' in message_dict:
                             if message_dict['struct'] is None:
                                 logging.error(
@@ -132,21 +185,30 @@ def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor:
                             macro = name
 
                             # Write our telemetry record to the database.
-                            db_cursor.execute(
-                                'INSERT INTO telemetry(name, message_id, macro, symbol, module, min_rate) '
-                                'VALUES (?, ?, ?, ?, ?, ?)',
-                                (name, message_id, macro, symbol_id, modules_dict[module_name], min_rate))
+                            if "union_select" in message_dict:
+                                union_config = message_dict["union_select"]
+                                union_mapping = get_union_mapping(message_dict['struct'], union_config, db_cursor)
+
+                                # (name, command_code, module, message_id)
+
+                                # # Write our command record to the database.
+                                # db_cursor.execute(
+                                #     'INSERT INTO union_selections(union_parent, union_field, command_item) '
+                                #     'VALUES (?, ?, ?, ?)',
+                                #     (union_mapping[0], union_mapping[1], message_id, macro, symbol_id, modules_dict[module_name],))
+
+                                telemetry_item_id = db_cursor.execute("SELECT id from commands where name=? AND "
+                                                                    "module=? AND message_id=?",
+                                                                    (name, modules_dict[module_name],
+                                                                     message_id)).fetchone()
+
+                                db_cursor.execute(
+                                    'INSERT INTO union_selections(union_parent, union_field, command_item) '
+                                    'VALUES (?, ?, ?)',
+                                    (union_mapping[0], union_mapping[1], telemetry_item_id[0],))
 
             if 'modules' in telemetry_data['modules'][module_name]:
                 write_telemetry_records(telemetry_data['modules'][module_name], modules_dict, db_cursor)
-
-
-
-
-
-
-
-
 
 
 def write_command_records(command_data: dict, modules_dict: dict, db_cursor: sqlite3.Cursor):
@@ -173,20 +235,11 @@ def write_command_records(command_data: dict, modules_dict: dict, db_cursor: sql
 
                 if command_dict['msgID'] is None:
                     command_dict['msgID'] = 0
-                    logging.warning(f"modules.{module_name}.commands.{command}.msgID must not be empty.  Setting it to 0.")
+                    logging.warning(
+                        f"modules.{module_name}.commands.{command}.msgID must not be empty.  Setting it to 0.")
                     # continue
 
                 message_id = command_dict['msgID']
-
-                if message_id is None:
-                    logging.error(
-                        f"modules.{module_name}.commands.{command} message does not have any msgID defined. Skipping.")
-                    continue
-
-                if command_data['modules'][module_name]['commands'] is None:
-                    logging.error(
-                        f"modules.{module_name}.commands.{command} message does not have any actual commands defined.  Skipping.")
-                    continue
 
                 sub_commands = command_data['modules'][module_name]['commands']
 
@@ -218,34 +271,45 @@ def write_command_records(command_data: dict, modules_dict: dict, db_cursor: sql
 
                             macro = command
 
-                            # Write our command record to the database.
-                            db_cursor.execute(
-                                'INSERT INTO commands(name, command_code, message_id, macro, symbol ,module) '
-                                'VALUES (?, ?, ?, ?, ?, ?)',
-                                (name, command_code, message_id, macro, symbol_id, modules_dict[module_name],))
+                            if "union_select" in sub_command_dict[name]:
+                                union_config = sub_command_dict[name]["union_select"]
+                                union_mapping = get_union_mapping(sub_command_dict[name]['struct'], union_config, db_cursor)
+
+                                # (name, command_code, module, message_id)
+
+                                # # Write our command record to the database.
+                                # db_cursor.execute(
+                                #     'INSERT INTO union_selections(union_parent, union_field, command_item) '
+                                #     'VALUES (?, ?, ?, ?)',
+                                #     (union_mapping[0], union_mapping[1], message_id, macro, symbol_id, modules_dict[module_name],))
+
+                                command_item_id = db_cursor.execute("SELECT id from commands where name=? AND "
+                                                                    "command_code=? AND module=? AND message_id=?",
+                                                                    (name, command_code, modules_dict[module_name],
+                                                                     message_id)).fetchone()
+
+                                db_cursor.execute(
+                                    'INSERT INTO union_selections(union_parent, union_field, command_item) '
+                                    'VALUES (?, ?, ?)',
+                                    (union_mapping[0], union_mapping[1], command_item_id[0],))
 
         if 'modules' in command_data['modules'][module_name]:
             write_command_records(command_data['modules'][module_name], modules_dict, db_cursor)
 
 
-
 def write_tlm_cmd_data(yaml_data: dict, db_cursor: sqlite3.Cursor):
-
     # Get all modules needed now that they are on the database.
     modules_dict = {}
     for module_id, module_name in db_cursor.execute('select id, name from modules').fetchall():
         modules_dict[module_name] = module_id
 
-    write_telemetry_records(yaml_data, modules_dict, db_cursor)
-
-    telemetry_dict = {}
-    for tlm_id, tlm_name in db_cursor.execute('select id, name from telemetry').fetchall():
-        telemetry_dict[tlm_name] = tlm_id
+    # write_telemetry_records(yaml_data, modules_dict, db_cursor)
+    #
+    # telemetry_dict = {}
+    # for tlm_id, tlm_name in db_cursor.execute('select id, name from telemetry').fetchall():
+    #     telemetry_dict[tlm_name] = tlm_id
 
     write_command_records(yaml_data, modules_dict, db_cursor)
-
-
-
 
 
 def parse_cli() -> argparse.Namespace:
@@ -261,7 +325,7 @@ def parse_cli() -> argparse.Namespace:
                         help='The file path to the sqlite database', required=True)
 
     return parser.parse_args()
-    
+
 
 def get_module_by_path(module_path: str, yaml_data: dict):
     module_yaml_dict = yaml_data
@@ -281,15 +345,16 @@ def get_module_by_path(module_path: str, yaml_data: dict):
     return module_yaml_dict
 
 
-def merge_all(database_path: str, module_path: str, yaml_file: str):
+def merge_all(database_path: str, yaml_file: str):
     db_handle = sqlite3.connect(database_path)
     db_cursor = db_handle.cursor()
 
     add_tables(db_cursor)
 
     full_yaml_data = read_yaml(yaml_file)
-    module_data = get_module_by_path(module_path, full_yaml_data)
-    
+
+    module_data = get_module_by_path("/", full_yaml_data)
+
     # Write all the data to the database.
     write_tlm_cmd_data(module_data, db_cursor)
 
@@ -299,7 +364,7 @@ def merge_all(database_path: str, module_path: str, yaml_file: str):
 
 def main():
     args = parse_cli()
-    merge_all(args.sqlite_path, args.module_path, args.yaml_path)
+    merge_all(args.sqlite_path, args.yaml_path)
 
 
 if __name__ == '__main__':
