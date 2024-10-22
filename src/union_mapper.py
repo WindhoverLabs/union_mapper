@@ -164,6 +164,18 @@ def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor:
                         name = message
                         min_rate = None
 
+
+                        # Check for empty values
+                        # FIXME: This logic is starting to look convoluted. The schema might help with this.
+                        if 'msgID' in message_dict:
+                            if message_dict['msgID'] is None:
+                                message_id = 0
+                                logging.warning(
+                                    f"modules.{module_name}.telemetry.{name}.msgID must not be empty. Setting it to 0.")
+                                # continue
+                            else:
+                                message_id = message_dict['msgID']
+
                         if 'struct' in message_dict:
                             if message_dict['struct'] is None:
                                 logging.error(
@@ -197,13 +209,13 @@ def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor:
                                 #     'VALUES (?, ?, ?, ?)',
                                 #     (union_mapping[0], union_mapping[1], message_id, macro, symbol_id, modules_dict[module_name],))
 
-                                telemetry_item_id = db_cursor.execute("SELECT id from commands where name=? AND "
+                                telemetry_item_id = db_cursor.execute("SELECT id from telemetry where name=? AND "
                                                                     "module=? AND message_id=?",
                                                                     (name, modules_dict[module_name],
                                                                      message_id)).fetchone()
 
                                 db_cursor.execute(
-                                    'INSERT INTO union_selections(union_parent, union_field, command_item) '
+                                    'INSERT INTO union_selections(union_parent, union_field, telemetry_item) '
                                     'VALUES (?, ?, ?)',
                                     (union_mapping[0], union_mapping[1], telemetry_item_id[0],))
 
@@ -303,7 +315,7 @@ def write_tlm_cmd_data(yaml_data: dict, db_cursor: sqlite3.Cursor):
     for module_id, module_name in db_cursor.execute('select id, name from modules').fetchall():
         modules_dict[module_name] = module_id
 
-    # write_telemetry_records(yaml_data, modules_dict, db_cursor)
+    write_telemetry_records(yaml_data, modules_dict, db_cursor)
     #
     # telemetry_dict = {}
     # for tlm_id, tlm_name in db_cursor.execute('select id, name from telemetry').fetchall():
