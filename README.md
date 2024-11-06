@@ -72,7 +72,7 @@ in the YAML:
 ![symbols](images/fields.png "fields table")
 
 Any consumer(e.g. [auto-yamcs](https://github.com/WindhoverLabs/auto-yamcs)) can read the `union_selections` table and
-find all the union associations for all telemetry and command items.
+find all the configured union associations for all telemetry and command items.
 
 
 
