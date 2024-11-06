@@ -3813,6 +3813,8 @@ modules:
           AddMessage:
             cc: 16
             struct: DS_AddMidCmd_t
+            union_select:
+              .Payload.CommandHeader.Msg: CCSDS
           CloseAll:
             cc: 17
             struct: DS_CloseAllCmd_t
