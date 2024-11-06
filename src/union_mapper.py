@@ -2,7 +2,6 @@ import sqlite3
 import argparse
 import yaml
 import logging
-from pathlib import Path
 
 
 def add_tables(db_cursor: sqlite3.Cursor):
@@ -45,7 +44,8 @@ def __follow_symbol_to_target(db_cursor, symbol_id: int):
     Returns the symbol id of the concrete symbol
     """
     symbol_record = db_cursor.execute(
-        'select id,elf,name,byte_size,artifact,long_description,short_description, target_symbol from symbols where id=?',
+        'select id,elf,name,byte_size,artifact,long_description,short_description, target_symbol from symbols where '
+        'id=?',
         (symbol_id,)).fetchall()
     target_symbol_id = symbol_record[0][7]
     if target_symbol_id is None:
@@ -70,8 +70,6 @@ def get_union_mapping(symbol_name: str, union_mapping: dict, db_cursor: sqlite3.
 
     symbol_fields = get_fields_from_symbol(__follow_symbol_to_target(db_cursor, symbol_id), db_cursor)
 
-    union_mapping_record = []
-
     union_parent_key = None
     union_field_key = None
 
@@ -83,7 +81,6 @@ def get_union_mapping(symbol_name: str, union_mapping: dict, db_cursor: sqlite3.
                 field_type = field[4]
 
         symbol_fields = get_fields_from_symbol(__follow_symbol_to_target(db_cursor, field_type), db_cursor)
-        print("symbol_fields")
 
     union_fields = symbol_fields
 
@@ -93,10 +90,7 @@ def get_union_mapping(symbol_name: str, union_mapping: dict, db_cursor: sqlite3.
         if field_name == union_field:
             union_field_key = field_id
 
-    print(f"union_parent_key:{union_parent_key}")
-    print(f"union_parent_key:{union_field_key}")
 
-    # db_cursor.execute("SELECT id,")
 
     logging.info(f"Selecting field {union_field} from {union_parent} union")
     return (union_parent_key, union_field_key)
@@ -162,7 +156,6 @@ def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor:
                         symbol = None
                         message_dict = telemetry_data['modules'][module_name]['telemetry'][message]
                         name = message
-                        min_rate = None
 
 
                         # Check for empty values
@@ -191,23 +184,11 @@ def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor:
                             logging.error(
                                 f"modules.{module_name}.telemetry.{name}.struct could not be found.  Skipping.")
                         else:
-                            symbol_id = symbol[0]
-
-                            # FIXME:Is there a point to this statement?
-                            macro = name
 
                             # Write our telemetry record to the database.
                             if "union_select" in message_dict:
                                 union_config = message_dict["union_select"]
                                 union_mapping = get_union_mapping(message_dict['struct'], union_config, db_cursor)
-
-                                # (name, command_code, module, message_id)
-
-                                # # Write our command record to the database.
-                                # db_cursor.execute(
-                                #     'INSERT INTO union_selections(union_parent, union_field, command_item) '
-                                #     'VALUES (?, ?, ?, ?)',
-                                #     (union_mapping[0], union_mapping[1], message_id, macro, symbol_id, modules_dict[module_name],))
 
                                 telemetry_item_id = db_cursor.execute("SELECT id from telemetry where name=? AND "
                                                                     "module=? AND message_id=?",
@@ -272,7 +253,6 @@ def write_command_records(command_data: dict, modules_dict: dict, db_cursor: sql
                             logging.error(
                                 f"modules.{module_name}.commands.{command}.{sub_command}.{sub_command_dict[name]['struct']} was not found.  Skipping.")
                         else:
-                            symbol_id = symbol[0]
 
                             if sub_command_dict[name]['cc'] is None:
                                 logging.error(
@@ -286,14 +266,6 @@ def write_command_records(command_data: dict, modules_dict: dict, db_cursor: sql
                             if "union_select" in sub_command_dict[name]:
                                 union_config = sub_command_dict[name]["union_select"]
                                 union_mapping = get_union_mapping(sub_command_dict[name]['struct'], union_config, db_cursor)
-
-                                # (name, command_code, module, message_id)
-
-                                # # Write our command record to the database.
-                                # db_cursor.execute(
-                                #     'INSERT INTO union_selections(union_parent, union_field, command_item) '
-                                #     'VALUES (?, ?, ?, ?)',
-                                #     (union_mapping[0], union_mapping[1], message_id, macro, symbol_id, modules_dict[module_name],))
 
                                 command_item_id = db_cursor.execute("SELECT id from commands where name=? AND "
                                                                     "command_code=? AND module=? AND message_id=?",
@@ -316,10 +288,6 @@ def write_tlm_cmd_data(yaml_data: dict, db_cursor: sqlite3.Cursor):
         modules_dict[module_name] = module_id
 
     write_telemetry_records(yaml_data, modules_dict, db_cursor)
-    #
-    # telemetry_dict = {}
-    # for tlm_id, tlm_name in db_cursor.execute('select id, name from telemetry').fetchall():
-    #     telemetry_dict[tlm_name] = tlm_id
 
     write_command_records(yaml_data, modules_dict, db_cursor)
 
