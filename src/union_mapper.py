@@ -171,17 +171,17 @@ def write_telemetry_records(telemetry_data: dict, modules_dict: dict, db_cursor:
 
                         if 'struct' in message_dict:
                             if message_dict['struct'] is None:
-                                logging.error(
+                                logging.warning(
                                     f"modules.{module_name}.telemetry.{name}.struct must not be empty. Skipping.")
                                 continue
                             else:
                                 symbol = get_symbol_id(message_dict['struct'], db_cursor)
                         else:
-                            logging.error(f"modules.{module_name}.telemetry.{name}.struct key must exist. Skipping.")
+                            logging.warning(f"modules.{module_name}.telemetry.{name}.struct key must exist. Skipping.")
 
                         # If the symbol does not exist, we skip it
                         if symbol is None:
-                            logging.error(
+                            logging.warning(
                                 f"modules.{module_name}.telemetry.{name}.struct could not be found.  Skipping.")
                         else:
 
@@ -239,7 +239,7 @@ def write_command_records(command_data: dict, modules_dict: dict, db_cursor: sql
                 if 'commands' in sub_commands[command]:
                     for sub_command in sub_commands[command]['commands']:
                         if sub_commands[command]['commands'] is None:
-                            logging.error(
+                            logging.warning(
                                 f"modules.{module_name}.commands.{command}.{sub_command} command is empty.  Skipping.")
                             continue
 
@@ -250,12 +250,12 @@ def write_command_records(command_data: dict, modules_dict: dict, db_cursor: sql
 
                         # If the symbol does not exist, we skip it
                         if not symbol:
-                            logging.error(
+                            logging.warning(
                                 f"modules.{module_name}.commands.{command}.{sub_command}.{sub_command_dict[name]['struct']} was not found.  Skipping.")
                         else:
 
                             if sub_command_dict[name]['cc'] is None:
-                                logging.error(
+                                logging.warning(
                                     f"modules.{module_name}.commands.{command}.cc must not be empty.  Skipping.")
                                 continue
 
